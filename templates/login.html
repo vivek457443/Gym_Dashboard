@@ -3,21 +3,75 @@
 {% block guest %}
 <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-indigo-500 to-purple-600">
   <div class="w-full max-w-sm bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
+
     <h1 class="text-2xl font-bold text-center mb-1">🏋️ GymAdmin</h1>
-    <p class="text-center text-sm text-gray-500 dark:text-gray-400 mb-6">Sign in to your dashboard</p>
-    {% if error %}<div class="mb-4 p-2 text-sm bg-red-100 text-red-700 rounded">{{ error }}</div>{% endif %}
+    <p class="text-center text-sm text-gray-500 dark:text-gray-400 mb-6">
+      {% if step == "otp" %}Enter the verification code{% else %}Sign in to your dashboard{% endif %}
+    </p>
+
+    {# ── Error / Info banners ── #}
+    {% if error %}
+      <div class="mb-4 p-3 text-sm bg-red-100 text-red-700 rounded-lg">{{ error }}</div>
+    {% endif %}
+    {% if info %}
+      <div class="mb-4 p-3 text-sm bg-green-100 text-green-700 rounded-lg">{{ info }}</div>
+    {% endif %}
+
+    {# ══════════════════════════════════════════
+       STEP 1 — Username / Password
+    ══════════════════════════════════════════ #}
+    {% if step != "otp" %}
     <form method="post" action="/login" class="space-y-4">
       <div>
         <label class="block text-sm mb-1">Username</label>
-        <input name="username" required class="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600" value="admin"/>
+        <input name="username" required autocomplete="username"
+               class="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
+               value="admin"/>
       </div>
       <div>
         <label class="block text-sm mb-1">Password</label>
-        <input type="password" name="password" required class="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600" value="admin123"/>
+        <input type="password" name="password" required autocomplete="current-password"
+               class="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"/>
       </div>
-      <button class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium">Sign in</button>
+      <button class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium">
+        Sign in
+      </button>
     </form>
-    <p class="text-xs text-center mt-4 text-gray-400">Default: admin / admin123</p>
+
+    {# ══════════════════════════════════════════
+       STEP 2 — OTP verification
+    ══════════════════════════════════════════ #}
+    {% else %}
+    <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">
+      A 6-digit code was sent to <strong>{{ email }}</strong>.<br>
+      Enter it below. It expires in 5 minutes.
+    </p>
+
+    <form method="post" action="/verify-otp" class="space-y-4">
+      <div>
+        <label class="block text-sm mb-1">Verification Code</label>
+        <input name="otp" required maxlength="6" pattern="\d{6}"
+               placeholder="000000"
+               autofocus
+               class="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600
+                      text-center text-2xl tracking-widest font-mono"/>
+      </div>
+      <button class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium">
+        Verify &amp; Sign in
+      </button>
+    </form>
+
+    <form method="post" action="/resend-otp" class="mt-3 text-center">
+      <button class="text-sm text-indigo-500 hover:underline">
+        Didn't receive it? Resend OTP
+      </button>
+    </form>
+
+    <p class="text-center text-xs mt-3 text-gray-400">
+      <a href="/login" class="hover:underline">← Back to login</a>
+    </p>
+    {% endif %}
+
   </div>
 </div>
 {% endblock %}

@@ -1,16 +1,22 @@
 # routes/members.py - CRUD for members, with image upload
-import os, uuid
+import logging
+import os
+import uuid
 from datetime import date, timedelta
-from fastapi import APIRouter, Request, Depends, Form, UploadFile, File
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from database import get_db
-from models import Member, Trainer, Payment
+
 from auth import login_required
+from database import get_db
+from models import Member, Payment, Trainer
+from notifications import send_welcome_email, send_welcome_whatsapp
 
 router = APIRouter(prefix="/members")
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
 PLAN_DAYS = {"Monthly": 30, "Quarterly": 90, "Yearly": 365}
 UPLOAD_DIR = "static/uploads"
@@ -53,6 +59,21 @@ def list_members(request: Request,
     })
 
 
+def _build_sms_message(name: str, membership_type: str,
+                       joining_date: date, expiry_date: date) -> str:
+    """
+    Builds the plain-text welcome SMS body.
+    Kept under ~160 chars so it fits in a single SMS segment.
+    """
+    return (
+        f"Welcome to XYZ Gym, {name}! "
+        f"Plan: {membership_type} | "
+        f"Joined: {joining_date} | "
+        f"Valid till: {expiry_date}. "
+        f"Let's get started!"
+    )
+
+
 @router.post("/add")
 def add_member(request: Request,
                user: str = Depends(login_required),
@@ -74,10 +95,63 @@ def add_member(request: Request,
         trainer_id=trainer_id or None,
         image=_save_image(image), active=True,
     )
-    db.add(m); db.commit(); db.refresh(m)
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+
     if payment_status == "Paid" and fee > 0:
         db.add(Payment(member_id=m.id, amount=fee, plan=membership_type))
         db.commit()
+
+    # ------------------------------------------------------------------ #
+    # Welcome email — failure is logged but must never abort registration
+    # ------------------------------------------------------------------ #
+    if m.email:
+        try:
+            result = send_welcome_email(
+                to_email=m.email,
+                member_name=m.name,
+                membership_type=m.membership_type,
+                joining_date=m.joining_date,
+                expiry_date=m.expiry_date,
+                fee=m.fee,
+            )
+            if not result.get("success"):
+                logger.warning(
+                    "Welcome email not sent for member %s (id=%s): %s",
+                    m.name, m.id, result.get("error", "unknown error"),
+                )
+        except Exception:
+            logger.exception(
+                "Unexpected error sending welcome email for member %s (id=%s)",
+                m.name, m.id,
+            )
+
+    # ------------------------------------------------------------------ #
+    # Welcome WhatsApp — independent of email; failure never aborts reg
+    # ------------------------------------------------------------------ #
+    if m.phone:
+        try:
+            result = send_welcome_whatsapp(
+                phone_number=m.phone,
+                member_name=m.name,
+                membership_type=m.membership_type,
+                joining_date=m.joining_date,
+                expiry_date=m.expiry_date,
+            )
+            if not result.get("success"):
+                logger.warning(
+                    "Welcome WhatsApp not sent for member %s (id=%s): %s",
+                    m.name, m.id, result.get("error", "unknown error"),
+                )
+        except Exception:
+            logger.exception(
+                "Unexpected error sending welcome WhatsApp for member %s (id=%s)",
+                m.name, m.id,
+            )
+
+    # ------------------------------------------------------------------ #
+
     return RedirectResponse("/members", status_code=303)
 
 
