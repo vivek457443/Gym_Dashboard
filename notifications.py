@@ -3,22 +3,17 @@
 # Public API (import these from other modules):
 #   send_otp_email(to_email)
 #   send_welcome_email(to_email, member_name, membership_type, joining_date, expiry_date, fee)
-#   send_welcome_whatsapp(phone_number, member_name, membership_type, joining_date, expiry_date)
 #   send_expiry_email(to_email, member_name, membership_type, expiry_date, days_left)
-#   send_expiry_whatsapp(phone_number, member_name, expiry_date, days_left)
 #   check_membership_expiry_reminders(db)   ← call daily from scheduler
-#   get_whatsapp_link(phone_number, message)
 #   verify_otp(email, user_submitted_otp)
 #   send_email(to_email, subject, message)  ← legacy general-purpose
 
 import logging
 import os
-import re
 import secrets
 import smtplib
 import ssl
 import time
-import urllib.parse
 from datetime import date, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -29,11 +24,6 @@ try:
 except ImportError:
     pass  # dotenv optional; env vars can be set another way
 
-try:
-    import pywhatkit as kit
-except ImportError:
-    kit = None
-
 logger = logging.getLogger(__name__)
 
 # =============================================================
@@ -41,14 +31,14 @@ logger = logging.getLogger(__name__)
 # Keep real values ONLY in your .env file — not here.
 # Fallbacks below are used if env vars are missing.
 # =============================================================
-_DEFAULT_SMTP_USER     = ""
-_DEFAULT_SMTP_PASSWORD = ""   # ← Gmail App Password
+_DEFAULT_SMTP_USER     = "vivektiwari88810@gmail.com"
+_DEFAULT_SMTP_PASSWORD = "exkmfjrejrejzyfp"
 _DEFAULT_SMTP_HOST     = "smtp.gmail.com"
 _DEFAULT_SMTP_PORT     = 465
 
 
 # =============================================================
-# SMTP HELPERS  (unchanged)
+# SMTP HELPERS
 # =============================================================
 
 def _get_smtp_config() -> dict:
@@ -81,7 +71,7 @@ def _send_message(cfg: dict, msg: MIMEMultipart) -> None:
 
 
 # =============================================================
-# IN-MEMORY OTP STORE  (unchanged)
+# IN-MEMORY OTP STORE
 # =============================================================
 _otp_store: dict[str, dict] = {}
 OTP_EXPIRY_SECONDS = 300
@@ -119,7 +109,7 @@ def verify_otp(email: str, user_submitted_otp: str) -> dict:
 
 
 # =============================================================
-# OTP EMAIL  (unchanged)
+# OTP EMAIL
 # =============================================================
 
 def send_otp_email(to_email: str) -> dict:
@@ -170,21 +160,24 @@ def send_otp_email(to_email: str) -> dict:
         msg.attach(MIMEText(plain, "plain", "utf-8"))
         msg.attach(MIMEText(html,  "html",  "utf-8"))
         _send_message(cfg, msg)
-        print(f"✅ OTP email sent to {to_email}")
+        logger.info("OTP email sent to %s", to_email)
         return {"success": True, "message": f"OTP sent to {to_email}"}
     except smtplib.SMTPAuthenticationError:
         _otp_store.pop(to_email, None)
+        logger.error("OTP email auth failure for %s", to_email)
         return {"success": False, "error": "SMTP authentication failed. Check your App Password."}
     except smtplib.SMTPException as e:
         _otp_store.pop(to_email, None)
+        logger.error("OTP SMTP error for %s: %s", to_email, e)
         return {"success": False, "error": f"SMTP error: {e}"}
     except Exception as e:
         _otp_store.pop(to_email, None)
+        logger.exception("Unexpected error sending OTP to %s", to_email)
         return {"success": False, "error": f"Unexpected error: {e}"}
 
 
 # =============================================================
-# WELCOME EMAIL  (unchanged)
+# WELCOME EMAIL
 # =============================================================
 
 def send_welcome_email(
@@ -201,7 +194,7 @@ def send_welcome_email(
     """
     cfg = _get_smtp_config()
     if not _smtp_ready(cfg):
-        print("❌ SMTP not configured — welcome email not sent.")
+        logger.warning("SMTP not configured — welcome email not sent to %s", to_email)
         return {"success": False, "error": "SMTP not configured."}
 
     plain = (
@@ -294,54 +287,18 @@ def send_welcome_email(
         msg.attach(MIMEText(plain, "plain", "utf-8"))
         msg.attach(MIMEText(html,  "html",  "utf-8"))
         _send_message(cfg, msg)
-        print(f"✅ Welcome email sent to {to_email}")
+        logger.info("Welcome email sent to %s", to_email)
         return {"success": True}
     except smtplib.SMTPAuthenticationError:
-        print("❌ Welcome email failed: Auth error")
+        logger.error("Welcome email auth failure for %s", to_email)
         return {"success": False, "error": "SMTP auth failed"}
     except Exception as e:
-        print(f"❌ Welcome email failed: {e}")
+        logger.exception("Welcome email failed for %s", to_email)
         return {"success": False, "error": str(e)}
 
 
 # =============================================================
-# WELCOME WHATSAPP  (NEW)
-# =============================================================
-
-def send_welcome_whatsapp(
-    phone_number: str,
-    member_name: str,
-    membership_type: str,
-    joining_date,
-    expiry_date,
-) -> dict:
-    """
-    Sends a welcome WhatsApp message to a newly registered member.
-    Wraps the existing send_whatsapp() so the return type is a consistent dict.
-
-    NOTE: pywhatkit opens a browser tab to send the message. This is a
-    library constraint — suitable for desktop/server environments where a
-    browser is available. For headless servers, replace kit.sendwhatmsg_instantly
-    with a Twilio/WhatsApp Business API call in send_whatsapp().
-    """
-    message = (
-        f"🏋️ *Welcome to XYZ Gym, {member_name}!*\n\n"
-        f"You are now a registered member. Here are your details:\n\n"
-        f"📋 *Plan:* {membership_type}\n"
-        f"📅 *Joined:* {joining_date}\n"
-        f"⏳ *Valid Till:* {expiry_date}\n\n"
-        f"We're thrilled to have you! Come in and crush those goals 💪\n"
-        f"— Team XYZ Gym"
-    )
-    success = send_whatsapp(phone_number, message)
-    if success:
-        logger.info("Welcome WhatsApp sent to %s", phone_number)
-        return {"success": True}
-    return {"success": False, "error": "send_whatsapp returned False — check logs above"}
-
-
-# =============================================================
-# EXPIRY REMINDER EMAIL  (NEW)
+# EXPIRY REMINDER EMAIL
 # =============================================================
 
 def send_expiry_email(
@@ -360,7 +317,6 @@ def send_expiry_email(
         logger.warning("SMTP not configured — expiry email not sent to %s", to_email)
         return {"success": False, "error": "SMTP not configured."}
 
-    # Urgency styling: red banner for 1 day, orange for 3, yellow for 7
     if days_left == 1:
         banner_color = "linear-gradient(135deg,#dc2626,#b91c1c)"
         urgency_line = "⚠️ Your membership expires <strong>TOMORROW</strong>!"
@@ -457,47 +413,13 @@ def send_expiry_email(
 
 
 # =============================================================
-# EXPIRY REMINDER WHATSAPP  (NEW)
-# =============================================================
-
-def send_expiry_whatsapp(
-    phone_number: str,
-    member_name: str,
-    expiry_date,
-    days_left: int,
-) -> dict:
-    """
-    Sends a membership expiry reminder via WhatsApp.
-    Called by check_membership_expiry_reminders() for 7, 3, and 1 day intervals.
-    """
-    if days_left == 1:
-        urgency = "⚠️ *URGENT:* Your membership expires TOMORROW!"
-    else:
-        urgency = f"📢 Your membership expires in *{days_left} days*."
-
-    message = (
-        f"🏋️ *XYZ Gym — Membership Reminder*\n\n"
-        f"Hello {member_name},\n\n"
-        f"{urgency}\n\n"
-        f"📅 *Expiry Date:* {expiry_date}\n\n"
-        f"Please renew at the gym to continue without interruption 💪\n"
-        f"— Team XYZ Gym"
-    )
-    success = send_whatsapp(phone_number, message)
-    if success:
-        logger.info("Expiry WhatsApp sent to %s (%d days left)", phone_number, days_left)
-        return {"success": True}
-    return {"success": False, "error": "send_whatsapp returned False — check logs above"}
-
-
-# =============================================================
-# LEGACY GENERAL-PURPOSE EMAIL  (unchanged)
+# LEGACY GENERAL-PURPOSE EMAIL
 # =============================================================
 
 def send_email(to_email: str, subject: str, message: str) -> bool:
     cfg = _get_smtp_config()
     if not _smtp_ready(cfg):
-        print("❌ SMTP not configured.")
+        logger.error("SMTP not configured — send_email aborted.")
         return False
     try:
         msg            = MIMEText(message, "plain", "utf-8")
@@ -505,63 +427,28 @@ def send_email(to_email: str, subject: str, message: str) -> bool:
         msg["From"]    = f"XYZ Gym <{cfg['sender']}>"
         msg["To"]      = to_email
         _send_message(cfg, msg)
-        print("✅ Email sent successfully")
+        logger.info("Generic email sent to %s", to_email)
         return True
     except smtplib.SMTPAuthenticationError:
-        print("❌ SMTP authentication failed: use a Gmail App Password.")
+        logger.error("send_email: SMTP authentication failed.")
     except smtplib.SMTPException as e:
-        print(f"❌ SMTP error: {e}")
+        logger.error("send_email: SMTP error: %s", e)
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        logger.exception("send_email: unexpected error sending to %s", to_email)
     return False
 
 
 # =============================================================
-# WHATSAPP  (unchanged)
+# EXPIRY REMINDER SCHEDULER ENTRY POINT
 # =============================================================
 
-def _normalise_whatsapp_number(phone_number: str) -> str:
-    cleaned = re.sub(r"[^\d+]", "", phone_number.strip())
-    if cleaned.startswith("00"):
-        cleaned = "+" + cleaned[2:]
-    if not cleaned.startswith("+"):
-        raise ValueError("WhatsApp number must include country code, e.g. +919876543210")
-    if len(re.sub(r"\D", "", cleaned)) < 10:
-        raise ValueError("WhatsApp phone number is too short")
-    return cleaned
-
-
-def get_whatsapp_link(phone_number: str, message: str) -> str:
-    phone_number = _normalise_whatsapp_number(phone_number)
-    return f"https://wa.me/{phone_number.replace('+', '')}?text={urllib.parse.quote(message)}"
-
-
-def send_whatsapp(phone_number: str, message: str) -> bool:
-    try:
-        phone_number = _normalise_whatsapp_number(phone_number)
-        if kit is None:
-            print("❌ pywhatkit not installed. Run: pip install pywhatkit")
-            return False
-        kit.sendwhatmsg_instantly(phone_number, message, wait_time=20, tab_close=True)
-        print("✅ WhatsApp message sent")
-        return True
-    except Exception as e:
-        print(f"❌ WhatsApp failed: {e}")
-        return False
-
-
-# =============================================================
-# EXPIRY REMINDER SCHEDULER ENTRY POINT  (NEW)
-# =============================================================
-
-# Reminder intervals in days. Adjust here to add/remove intervals globally.
 EXPIRY_REMINDER_DAYS: list[int] = [7, 3, 1]
 
 
 def check_membership_expiry_reminders(db) -> dict:
     """
     Queries all active members whose membership expires in exactly 7, 3, or 1
-    day(s) from today, then dispatches both email and WhatsApp reminders.
+    day(s) from today, then dispatches email reminders.
 
     Designed to be called once daily by any scheduler:
         APScheduler, Celery beat, cron, Render Cron Job, Railway Cron, etc.
@@ -591,8 +478,6 @@ def check_membership_expiry_reminders(db) -> dict:
             "sent"     — number of notifications dispatched successfully
             "failed"   — number of notifications that failed
     """
-    # Import here (not at module top) to avoid circular imports:
-    # notifications.py has no knowledge of models at import time.
     from models import Member  # noqa: PLC0415
 
     today   = date.today()
@@ -610,48 +495,29 @@ def check_membership_expiry_reminders(db) -> dict:
             checked += 1
             member_label = f"{m.name} (id={m.id}, days_left={days_left})"
 
-            # --- Email reminder ---
-            if m.email:
-                try:
-                    result = send_expiry_email(
-                        to_email=m.email,
-                        member_name=m.name,
-                        membership_type=m.membership_type,
-                        expiry_date=m.expiry_date,
-                        days_left=days_left,
-                    )
-                    if result.get("success"):
-                        sent += 1
-                    else:
-                        failed += 1
-                        logger.warning(
-                            "Expiry email failed for %s: %s",
-                            member_label, result.get("error"),
-                        )
-                except Exception:
-                    failed += 1
-                    logger.exception("Unexpected error in expiry email for %s", member_label)
+            if not m.email:
+                logger.debug("Skipping expiry reminder for %s — no email on record", member_label)
+                continue
 
-            # --- WhatsApp reminder ---
-            if m.phone:
-                try:
-                    result = send_expiry_whatsapp(
-                        phone_number=m.phone,
-                        member_name=m.name,
-                        expiry_date=m.expiry_date,
-                        days_left=days_left,
-                    )
-                    if result.get("success"):
-                        sent += 1
-                    else:
-                        failed += 1
-                        logger.warning(
-                            "Expiry WhatsApp failed for %s: %s",
-                            member_label, result.get("error"),
-                        )
-                except Exception:
+            try:
+                result = send_expiry_email(
+                    to_email=m.email,
+                    member_name=m.name,
+                    membership_type=m.membership_type,
+                    expiry_date=m.expiry_date,
+                    days_left=days_left,
+                )
+                if result.get("success"):
+                    sent += 1
+                else:
                     failed += 1
-                    logger.exception("Unexpected error in expiry WhatsApp for %s", member_label)
+                    logger.warning(
+                        "Expiry email failed for %s: %s",
+                        member_label, result.get("error"),
+                    )
+            except Exception:
+                failed += 1
+                logger.exception("Unexpected error in expiry email for %s", member_label)
 
     logger.info(
         "Expiry reminder run complete — checked: %d, sent: %d, failed: %d",
@@ -661,7 +527,7 @@ def check_membership_expiry_reminders(db) -> dict:
 
 
 # =============================================================
-# EMAIL TEST UTILITY  —  python notifications.py  (unchanged)
+# EMAIL TEST UTILITY  —  python notifications.py
 # =============================================================
 
 def run_email_test(send_to: str | None = None) -> None:
